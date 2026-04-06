@@ -1,0 +1,18 @@
+shepherd:
+  task: shepherd_default
+  run:
+    steps: 500000
+    envs: 1
+    train_ratio: 512
+    log_every: 30
+    report_every: 120
+    save_every: 300
+  batch_size: 16
+  batch_length: 64
+  replay:
+    size: 1e5
+    online: True
+  # Small model — 1M param class
+  .*\.rssm: {deter: 512, hidden: 64, classes: 4}
+  .*\.depth: 4
+  .*\.units: 64
