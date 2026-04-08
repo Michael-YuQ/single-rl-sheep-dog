@@ -36,6 +36,18 @@ def _patched_make_env(config, index=0, **overrides):
         from envs.shepherd_dreamer import ShepherdEnv
         env = ShepherdEnv(task=task, n_sheep=10)
         return dv3main.wrap_env(env, config)
+    if suite == "perimeter":
+        from envs.shepherd_dreamer import PerimeterShepherdEnv
+        env = PerimeterShepherdEnv(task=task, n_sheep=10)
+        return dv3main.wrap_env(env, config)
+    if suite == "push":
+        from envs.shepherd_dreamer import PushShepherdEnv
+        env = PushShepherdEnv(task=task, n_sheep=100)
+        return dv3main.wrap_env(env, config)
+    if suite == "threedog":
+        from envs.shepherd_dreamer import ThreeDogShepherdEnv
+        env = ThreeDogShepherdEnv(task=task, n_sheep=100)
+        return dv3main.wrap_env(env, config)
     if suite == "shepherdmultidog":
         from envs.multidog_dreamer import MultiDogShepherdEnv
         env = MultiDogShepherdEnv(task=task, n_sheep=100, n_dogs=10)
@@ -63,6 +75,18 @@ def main(argv=None):
     multidog_cfg_path = pathlib.Path(__file__).parent / "configs" / "shepherd_multidog.yaml"
     multidog_cfgs = yaml.YAML(typ="safe").load(multidog_cfg_path.read_text())
     configs.update(multidog_cfgs)
+    perimeter_cfg_path = pathlib.Path(__file__).parent / "configs" / "shepherd_perimeter.yaml"
+    perimeter_cfgs = yaml.YAML(typ="safe").load(perimeter_cfg_path.read_text())
+    configs.update(perimeter_cfgs)
+    push100_cfg_path = pathlib.Path(__file__).parent / "configs" / "shepherd_push100.yaml"
+    push100_cfgs = yaml.YAML(typ="safe").load(push100_cfg_path.read_text())
+    configs.update(push100_cfgs)
+    milestone_cfg_path = pathlib.Path(__file__).parent / "configs" / "shepherd_milestone.yaml"
+    milestone_cfgs = yaml.YAML(typ="safe").load(milestone_cfg_path.read_text())
+    configs.update(milestone_cfgs)
+    threedog_cfg_path = pathlib.Path(__file__).parent / "configs" / "shepherd_threedog.yaml"
+    threedog_cfgs = yaml.YAML(typ="safe").load(threedog_cfg_path.read_text())
+    configs.update(threedog_cfgs)
 
     parsed, other = elements.Flags(configs=["defaults"]).parse_known(argv)
     config = elements.Config(configs["defaults"])

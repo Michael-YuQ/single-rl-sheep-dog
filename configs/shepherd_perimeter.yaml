@@ -1,5 +1,5 @@
-shepherd:
-  task: shepherd_default
+shepherd_perimeter:
+  task: perimeter_default
   run:
     steps: 500000
     envs: 1
@@ -12,7 +12,6 @@ shepherd:
   replay:
     size: 1e5
     online: True
-  # Slightly larger model to handle expanded 22-action space
   .*\.rssm: {deter: 512, hidden: 128, classes: 8}
   .*\.depth: 4
   .*\.units: 128

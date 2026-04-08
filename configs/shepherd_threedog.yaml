@@ -1,0 +1,18 @@
+shepherd_threedog:
+  task: threedog_default
+  run:
+    steps: 1000000
+    envs: 1
+    train_ratio: 512
+    log_every: 30
+    report_every: 120
+    save_every: 300
+  batch_size: 16
+  batch_length: 64
+  replay:
+    size: 1e5
+    online: True
+  # Slightly larger RSSM to handle 14-dim obs + 125 joint actions
+  .*\.rssm: {deter: 512, hidden: 256, classes: 8}
+  .*\.depth: 4
+  .*\.units: 256

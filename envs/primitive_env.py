@@ -1,10 +1,15 @@
 """
 Primitive (macro-action) wrapper around SheepEnv.
 
-The upper-level policy selects one of (N+2) discrete macro-actions:
-  0        : MUSTER  — gather scattered sheep toward flock centroid
-  1        : HOLD    — guard goal entrance, block escapes
-  2..N+1   : DRIVE_i — push sheep i toward goal
+The upper-level policy selects one of (N+12) discrete macro-actions:
+  0        : MUSTER        — gather scattered sheep toward flock centroid (direct)
+  1        : HOLD          — guard goal entrance, block escapes
+  2..N+1   : DRIVE_i       — push sheep i toward goal (direct)
+  N+2      : MUSTER_ARC    — arc around flock to approach outlier from behind
+  N+3      : FLANK_LEFT    — arc to left flank of flock, push toward goal
+  N+4      : FLANK_RIGHT   — arc to right flank of flock
+  N+5      : SWEEP_BEHIND  — arc to position behind entire flock for full push
+  N+6..N+11: BYPASS_DRIVE_i — arc around flock then drive sheep i (i=0..5)
 
 Each macro-action runs K=15 low-level steps with a geometric controller,
 then returns the aggregated reward and the compressed upper-level observation.
@@ -24,7 +29,9 @@ from .sheep_env import SheepEnv
 
 K = 15          # steps per macro-action
 DOG_SPEED = 2.0
-BEHIND_OFFSET = 3.0   # metres behind sheep (away from goal) to position dog
+BEHIND_OFFSET  = 3.0    # metres behind sheep (away from goal) to position dog
+BYPASS_FACTOR  = 1.5    # flock spread multiplier for collision check
+ARC_OFFSET     = 5.0    # extra metres away from flock when arcing
 
 
 class PrimitiveEnv(gym.Env):
@@ -37,7 +44,7 @@ class PrimitiveEnv(gym.Env):
         self.L = self._env.L
         self.goal = self._env.goal
 
-        n_actions = n_sheep + 2   # MUSTER, HOLD, DRIVE_0..DRIVE_{n-1}
+        n_actions = n_sheep + 2 + 10   # MUSTER, HOLD, DRIVE*n, + 10 new arc actions
         self.action_space = spaces.Discrete(n_actions)
         self.observation_space = spaces.Box(
             low=0.0, high=1.0, shape=(10,), dtype=np.float32
@@ -87,13 +94,14 @@ class PrimitiveEnv(gym.Env):
         """Return a 2-D velocity command for one low-level step."""
         dp = self._env.dog_pos_single
         sp = self._env.sheep_pos
+        centroid = sp.mean(axis=0)
+        spread = float(np.std(sp, axis=0).mean()) + 1.0
 
+        # ---- Original actions ----
         if action_id == 0:
-            # MUSTER: move toward centroid of sheep farthest from flock
-            centroid = sp.mean(axis=0)
+            # MUSTER: direct to behind outlier sheep
             dists = np.linalg.norm(sp - centroid, axis=1)
             outlier = sp[np.argmax(dists)]
-            # Position behind outlier (away from centroid)
             away = outlier - centroid
             away_norm = np.linalg.norm(away) + 1e-8
             target = outlier + away / away_norm * BEHIND_OFFSET
@@ -104,19 +112,85 @@ class PrimitiveEnv(gym.Env):
             goal_entrance = self.goal - np.array([self._env.goal_radius * 1.2, 0.0])
             return self._move_toward(dp, goal_entrance)
 
-        else:
-            # DRIVE_i: push sheep (action_id - 2) toward goal
+        elif 2 <= action_id <= self.n + 1:
+            # DRIVE_i: push sheep i toward goal (direct)
             i = action_id - 2
             i = np.clip(i, 0, self.n - 1)
             sheep = sp[i]
-            # Position dog behind sheep relative to goal
             to_goal = self.goal - sheep
             to_goal_norm = np.linalg.norm(to_goal) + 1e-8
             behind = sheep - to_goal / to_goal_norm * BEHIND_OFFSET
             return self._move_toward(dp, behind)
 
+        # ---- New arc/bypass actions ----
+        elif action_id == self.n + 2:
+            # MUSTER_ARC: arc around flock to outlier
+            dists = np.linalg.norm(sp - centroid, axis=1)
+            outlier = sp[np.argmax(dists)]
+            away = outlier - centroid
+            away_norm = np.linalg.norm(away) + 1e-8
+            target = outlier + away / away_norm * BEHIND_OFFSET
+            return self._arc_move_toward(dp, target, centroid, spread)
+
+        elif action_id == self.n + 3:
+            # FLANK_LEFT: arc to left of flock
+            to_goal = self.goal - centroid
+            to_goal_n = np.linalg.norm(to_goal) + 1e-8
+            left = np.array([-to_goal[1], to_goal[0]]) / to_goal_n
+            target = centroid - to_goal / to_goal_n * (spread * BYPASS_FACTOR + BEHIND_OFFSET) + left * (spread + ARC_OFFSET)
+            return self._arc_move_toward(dp, target, centroid, spread)
+
+        elif action_id == self.n + 4:
+            # FLANK_RIGHT: arc to right of flock
+            to_goal = self.goal - centroid
+            to_goal_n = np.linalg.norm(to_goal) + 1e-8
+            right = np.array([to_goal[1], -to_goal[0]]) / to_goal_n
+            target = centroid - to_goal / to_goal_n * (spread * BYPASS_FACTOR + BEHIND_OFFSET) + right * (spread + ARC_OFFSET)
+            return self._arc_move_toward(dp, target, centroid, spread)
+
+        elif action_id == self.n + 5:
+            # SWEEP_BEHIND: arc to behind entire flock (away from goal)
+            to_goal = self.goal - centroid
+            to_goal_n = np.linalg.norm(to_goal) + 1e-8
+            behind_flock = centroid - to_goal / to_goal_n * (spread * BYPASS_FACTOR + BEHIND_OFFSET)
+            return self._arc_move_toward(dp, behind_flock, centroid, spread)
+
+        elif self.n + 6 <= action_id <= self.n + 11:
+            # BYPASS_DRIVE_i: arc around flock then drive sheep i
+            k = action_id - (self.n + 6)
+            k = np.clip(k, 0, self.n - 1)
+            sheep = sp[k]
+            to_goal = self.goal - sheep
+            to_goal_norm = np.linalg.norm(to_goal) + 1e-8
+            behind = sheep - to_goal / to_goal_norm * BEHIND_OFFSET
+            return self._arc_move_toward(dp, behind, centroid, spread)
+
+        else:
+            return np.zeros(2, dtype=np.float32)
+
     def _move_toward(self, current: np.ndarray, target: np.ndarray) -> np.ndarray:
         delta = target - current
         dist = np.linalg.norm(delta) + 1e-8
-        vel = delta / dist  # unit vector, env will scale by dog_speed
+        vel = delta / dist
         return vel.astype(np.float32)
+
+    def _arc_move_toward(self, current: np.ndarray, target: np.ndarray,
+                         centroid: np.ndarray, spread: float) -> np.ndarray:
+        """Move toward target, arcing around flock if direct path cuts through."""
+        to_target = target - current
+        dist_tt   = np.linalg.norm(to_target) + 1e-8
+        dir_tt    = to_target / dist_tt
+
+        to_centroid = centroid - current
+        proj_len    = float(np.clip(np.dot(to_centroid, dir_tt), 0.0, dist_tt))
+        closest     = current + dir_tt * proj_len
+        dist_to_path = np.linalg.norm(centroid - closest)
+
+        if dist_to_path < spread * BYPASS_FACTOR:
+            perp = np.array([-dir_tt[1], dir_tt[0]], dtype=np.float32)
+            waypoint = centroid + perp * (spread * BYPASS_FACTOR + ARC_OFFSET)
+            if np.linalg.norm(waypoint - current) > np.linalg.norm(target - current):
+                waypoint = centroid - perp * (spread * BYPASS_FACTOR + ARC_OFFSET)
+            return self._move_toward(current, waypoint)
+
+        return self._move_toward(current, target)
